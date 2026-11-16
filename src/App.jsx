@@ -5,11 +5,24 @@ import {
   RefreshCw, Smartphone, DollarSign, PieChart, Clock, ExternalLink, HelpCircle,
   Utensils, Home, Car, GraduationCap, HeartPulse, Coffee, ShoppingBag, Check, X
 } from 'lucide-react';
-import { getSupabaseClient } from './supabaseClient';
+import { getSupabaseClient, resetSupabaseClient, sanitizeSupabaseUrl } from './supabaseClient';
 import { 
   INITIAL_CATEGORIES, INITIAL_EXPENSES, INITIAL_INCOME, 
   INITIAL_COMMITMENTS, PAYMENT_METHODS 
 } from './initialData';
+
+// Helper to generate Supabase-compatible UUIDs
+const generateUUID = () => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // Fallback RFC4122 compliant UUID v4
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+};
 
 export default function App() {
   // Navigation State
@@ -37,10 +50,16 @@ export default function App() {
   });
 
   // Supabase Configuration State
-  const [supabaseUrl, setSupabaseUrl] = useState(() => localStorage.getItem('supabase_url') || '');
-  const [supabaseKey, setSupabaseKey] = useState(() => localStorage.getItem('supabase_anon_key') || '');
+  const [supabaseUrl, setSupabaseUrl] = useState(() => {
+    const raw = localStorage.getItem('supabase_url') || import.meta.env.VITE_SUPABASE_URL || '';
+    return sanitizeSupabaseUrl(raw);
+  });
+  const [supabaseKey, setSupabaseKey] = useState(() => {
+    return localStorage.getItem('supabase_anon_key') || import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+  });
   const [isCloudConnected, setIsCloudConnected] = useState(false);
   const [syncStatus, setSyncStatus] = useState(''); // 'idle' | 'syncing' | 'success' | 'error'
+  const [connectionMessage, setConnectionMessage] = useState('');
 
   // Modals & Forms
   const [showAddExpense, setShowAddExpense] = useState(false);
@@ -85,31 +104,55 @@ export default function App() {
 
   // Check Supabase connection on load
   useEffect(() => {
-    const client = getSupabaseClient();
-    if (client) {
-      testSupabaseConnection(client);
-    }
+    testSupabaseConnection();
   }, []);
 
-  const testSupabaseConnection = async (clientInstance) => {
-    const client = clientInstance || getSupabaseClient();
+  const testSupabaseConnection = async () => {
+    const client = getSupabaseClient();
     if (!client) {
       setIsCloudConnected(false);
       return;
     }
     setSyncStatus('syncing');
     try {
-      const { data, error } = await client.from('categories').select('count', { count: 'exact', head: true });
-      if (error && error.code !== 'PGRST116') {
+      // Use a simple GET query
+      const { data, error } = await client.from('categories').select('*').limit(1);
+      if (error) {
         throw error;
       }
       setIsCloudConnected(true);
       setSyncStatus('success');
+      setConnectionMessage('✅ متصل بالسحابة (Supabase) وجاهز للمزامنة');
       setTimeout(() => setSyncStatus(''), 3000);
+
+      // Auto-sync data if cloud has entries
+      loadDataFromCloud(client);
     } catch (err) {
       console.warn('Supabase test connection failed:', err);
       setIsCloudConnected(false);
       setSyncStatus('error');
+      setConnectionMessage(`⚠️ فشل الاتصال: ${err.message || 'تأكد من صحة الرابط والمفتاح'}`);
+    }
+  };
+
+  const loadDataFromCloud = async (clientInstance) => {
+    const client = clientInstance || getSupabaseClient();
+    if (!client) return;
+
+    try {
+      const [catRes, expRes, incRes, comRes] = await Promise.all([
+        client.from('categories').select('*').order('created_at', { ascending: true }),
+        client.from('expenses').select('*').order('date', { ascending: false }),
+        client.from('income').select('*').order('date', { ascending: false }),
+        client.from('commitments').select('*').order('due_day', { ascending: true }),
+      ]);
+
+      if (catRes.data && catRes.data.length > 0) setCategories(catRes.data);
+      if (expRes.data && expRes.data.length > 0) setExpenses(expRes.data);
+      if (incRes.data && incRes.data.length > 0) setIncome(incRes.data);
+      if (comRes.data && comRes.data.length > 0) setCommitments(comRes.data);
+    } catch (e) {
+      console.warn('Error loading data from cloud:', e);
     }
   };
 
@@ -121,26 +164,14 @@ export default function App() {
     }
     setSyncStatus('syncing');
     try {
-      // Fetch cloud data
-      const [catRes, expRes, incRes, comRes] = await Promise.all([
-        client.from('categories').select('*'),
-        client.from('expenses').select('*'),
-        client.from('income').select('*'),
-        client.from('commitments').select('*'),
-      ]);
-
-      if (catRes.data && catRes.data.length > 0) setCategories(catRes.data);
-      if (expRes.data && expRes.data.length > 0) setExpenses(expRes.data);
-      if (incRes.data && incRes.data.length > 0) setIncome(incRes.data);
-      if (comRes.data && comRes.data.length > 0) setCommitments(comRes.data);
-
+      await loadDataFromCloud(client);
       setIsCloudConnected(true);
       setSyncStatus('success');
-      alert('✅ تمت المزامنة بنجاح مع قاعدة بيانات Supabase السحابية!');
+      alert('✅ تمت المزامنة بنجاح مع جداول Supabase!');
     } catch (err) {
       console.error(err);
       setSyncStatus('error');
-      alert('⚠️ تعذرت المزامنة. تأكد من تشغيل ملف supabase_schema.sql في مشروعك وصحة المفاتيح.');
+      alert(`⚠️ تعذرت المزامنة: ${err.message || 'تأكد من المفاتيح'}`);
     }
   };
 
@@ -189,7 +220,6 @@ export default function App() {
     let detectedCategory = '';
     let detectedMethod = PAYMENT_METHODS[0];
 
-    // Find amount (number)
     for (const part of parts) {
       const num = parseFloat(part);
       if (!isNaN(num) && num > 0) {
@@ -198,7 +228,6 @@ export default function App() {
       }
     }
 
-    // Find category keywords
     const lower = text.toLowerCase();
     if (lower.includes('طعام') || lower.includes('اكل') || lower.includes('سوبرماركت') || lower.includes('خضار') || lower.includes('لحم') || lower.includes('تموين')) {
       detectedCategory = 'طعام وسوبرماركت';
@@ -218,7 +247,6 @@ export default function App() {
       detectedCategory = categories[0]?.name || 'طعام وسوبرماركت';
     }
 
-    // Detect payment method
     if (lower.includes('فيزا') || lower.includes('ديبت') || lower.includes('كارت')) {
       detectedMethod = 'بطاقة بنكية (Debit)';
     } else if (lower.includes('كريديت') || lower.includes('ائتمان')) {
@@ -243,11 +271,12 @@ export default function App() {
   };
 
   // Add Expense Handler
-  const handleAddExpense = (e) => {
+  const handleAddExpense = async (e) => {
     e.preventDefault();
     if (!newExpense.title || !newExpense.amount) return;
+    
     const item = {
-      id: 'exp-' + Date.now(),
+      id: generateUUID(),
       title: newExpense.title,
       amount: parseFloat(newExpense.amount),
       category: newExpense.category,
@@ -255,14 +284,23 @@ export default function App() {
       date: newExpense.date || new Date().toISOString().split('T')[0],
       notes: newExpense.notes || '',
     };
+    
     setExpenses([item, ...expenses]);
 
-    // Push to Supabase if connected
+    // Push to Supabase
     const client = getSupabaseClient();
-    if (client && isCloudConnected) {
-      client.from('expenses').insert([item]).then(({ error }) => {
-        if (error) console.error('Cloud insert error:', error);
-      });
+    if (client) {
+      try {
+        const { error } = await client.from('expenses').insert([item]);
+        if (error) {
+          console.error('Supabase expense insert error:', error);
+          alert(`⚠️ تم الحفظ محلياً لكن حدث خطأ في المزامنة السحابية: ${error.message}`);
+        } else {
+          setIsCloudConnected(true);
+        }
+      } catch (err) {
+        console.error('Cloud insert error:', err);
+      }
     }
 
     setNewExpense({
@@ -278,11 +316,12 @@ export default function App() {
   };
 
   // Add Income Handler
-  const handleAddIncome = (e) => {
+  const handleAddIncome = async (e) => {
     e.preventDefault();
     if (!newIncome.source || !newIncome.amount) return;
+    
     const item = {
-      id: 'inc-' + Date.now(),
+      id: generateUUID(),
       source: newIncome.source,
       amount: parseFloat(newIncome.amount),
       expected_amount: parseFloat(newIncome.expected_amount || newIncome.amount),
@@ -290,13 +329,23 @@ export default function App() {
       date: newIncome.date || new Date().toISOString().split('T')[0],
       notes: newIncome.notes || '',
     };
+
     setIncome([item, ...income]);
 
+    // Push to Supabase
     const client = getSupabaseClient();
-    if (client && isCloudConnected) {
-      client.from('income').insert([item]).then(({ error }) => {
-        if (error) console.error('Cloud insert error:', error);
-      });
+    if (client) {
+      try {
+        const { error } = await client.from('income').insert([item]);
+        if (error) {
+          console.error('Supabase income insert error:', error);
+          alert(`⚠️ تم الحفظ محلياً لكن حدث خطأ في المزامنة السحابية: ${error.message}`);
+        } else {
+          setIsCloudConnected(true);
+        }
+      } catch (err) {
+        console.error('Cloud insert error:', err);
+      }
     }
 
     setNewIncome({
@@ -311,24 +360,34 @@ export default function App() {
   };
 
   // Add Commitment Handler
-  const handleAddCommitment = (e) => {
+  const handleAddCommitment = async (e) => {
     e.preventDefault();
     if (!newCommitment.title || !newCommitment.amount) return;
+    
     const item = {
-      id: 'com-' + Date.now(),
+      id: generateUUID(),
       title: newCommitment.title,
       amount: parseFloat(newCommitment.amount),
       due_day: parseInt(newCommitment.due_day) || 15,
       status: newCommitment.status,
       notes: newCommitment.notes || '',
     };
+
     setCommitments([...commitments, item]);
 
     const client = getSupabaseClient();
-    if (client && isCloudConnected) {
-      client.from('commitments').insert([item]).then(({ error }) => {
-        if (error) console.error('Cloud insert error:', error);
-      });
+    if (client) {
+      try {
+        const { error } = await client.from('commitments').insert([item]);
+        if (error) {
+          console.error('Supabase commitment insert error:', error);
+          alert(`⚠️ تم الحفظ محلياً لكن حدث خطأ في المزامنة: ${error.message}`);
+        } else {
+          setIsCloudConnected(true);
+        }
+      } catch (err) {
+        console.error('Cloud insert error:', err);
+      }
     }
 
     setNewCommitment({
@@ -342,57 +401,91 @@ export default function App() {
   };
 
   // Toggle Commitment Status
-  const toggleCommitmentStatus = (id) => {
-    setCommitments(commitments.map(c => {
+  const toggleCommitmentStatus = async (id) => {
+    const updated = commitments.map(c => {
       if (c.id === id) {
         const nextStatus = c.status === 'تم الدفع' ? 'معلق' : 'تم الدفع';
-        // Cloud update
-        const client = getSupabaseClient();
-        if (client && isCloudConnected) {
-          client.from('commitments').update({ status: nextStatus }).eq('id', id).then();
-        }
         return { ...c, status: nextStatus };
       }
       return c;
-    }));
+    });
+    setCommitments(updated);
+
+    const client = getSupabaseClient();
+    if (client) {
+      const target = updated.find(c => c.id === id);
+      if (target) {
+        client.from('commitments').update({ status: target.status }).eq('id', id).then();
+      }
+    }
   };
 
   // Delete Handlers
-  const deleteExpense = (id) => {
+  const deleteExpense = async (id) => {
     if (!confirm('هل أنت متأكد من حذف هذا المصروف؟')) return;
     setExpenses(expenses.filter(e => e.id !== id));
     const client = getSupabaseClient();
-    if (client && isCloudConnected) {
+    if (client) {
       client.from('expenses').delete().eq('id', id).then();
     }
   };
 
-  const deleteIncome = (id) => {
+  const deleteIncome = async (id) => {
     if (!confirm('هل تريد حذف مصدر الدخل هذا؟')) return;
     setIncome(income.filter(i => i.id !== id));
     const client = getSupabaseClient();
-    if (client && isCloudConnected) {
+    if (client) {
       client.from('income').delete().eq('id', id).then();
     }
   };
 
-  const deleteCommitment = (id) => {
+  const deleteCommitment = async (id) => {
     if (!confirm('هل تريد حذف هذا الالتزام؟')) return;
     setCommitments(commitments.filter(c => c.id !== id));
     const client = getSupabaseClient();
-    if (client && isCloudConnected) {
+    if (client) {
       client.from('commitments').delete().eq('id', id).then();
     }
   };
 
   // Save Supabase credentials
-  const saveSupabaseConfig = (e) => {
+  const saveSupabaseConfig = async (e) => {
     e.preventDefault();
-    localStorage.setItem('supabase_url', supabaseUrl.trim());
-    localStorage.setItem('supabase_anon_key', supabaseKey.trim());
+    const cleanUrl = sanitizeSupabaseUrl(supabaseUrl);
+    const cleanKey = supabaseKey.trim();
+
+    localStorage.setItem('supabase_url', cleanUrl);
+    localStorage.setItem('supabase_anon_key', cleanKey);
+    setSupabaseUrl(cleanUrl);
+
+    resetSupabaseClient();
+    setSyncStatus('syncing');
+    setConnectionMessage('جاري اختبار الاتصال بقاعدة بيانات Supabase...');
+
     const client = getSupabaseClient();
-    testSupabaseConnection(client);
-    alert('تم حفظ الإعدادات، جاري التحقق من الاتصال السحابي...');
+    if (!client) {
+      setIsCloudConnected(false);
+      setSyncStatus('error');
+      setConnectionMessage('⚠️ يرجى التأكد من ملء كل من الرابط والمفتاح بشكل صحيح.');
+      return;
+    }
+
+    try {
+      const { data, error } = await client.from('categories').select('*').limit(1);
+      if (error) throw error;
+
+      setIsCloudConnected(true);
+      setSyncStatus('success');
+      setConnectionMessage('✅ تم الاتصال بنجاح! جاري مزامنة البيانات...');
+      await loadDataFromCloud(client);
+      alert('🎉 تم الاتصال بنجاح بقاعدة بيانات Supabase ومزامنة البيانات!');
+    } catch (err) {
+      console.error(err);
+      setIsCloudConnected(false);
+      setSyncStatus('error');
+      setConnectionMessage(`❌ خطأ في الاتصال: ${err.message || 'تأكد من صحة الرابط ومفتاح Anon'}`);
+      alert(`❌ فشل الاتصال: ${err.message || 'تأكد من المفتاح العام Anon وليس مفتاح Service Role'}`);
+    }
   };
 
   return (
@@ -409,7 +502,9 @@ export default function App() {
               <h1 className="text-lg font-bold tracking-tight">مصروفي</h1>
               <div className="flex items-center gap-1.5 text-xs text-slate-400">
                 <span className={`w-2 h-2 rounded-full ${isCloudConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`}></span>
-                <span>{isCloudConnected ? 'سحابي متصل (Supabase)' : 'تخزين محلي (Offline)'}</span>
+                <span className={isCloudConnected ? 'text-emerald-400 font-semibold' : 'text-amber-400'}>
+                  {isCloudConnected ? 'سحابي متصل (Supabase)' : 'تخزين محلي (Offline)'}
+                </span>
               </div>
             </div>
           </div>
@@ -898,27 +993,47 @@ export default function App() {
 
             {/* Supabase Connection Form */}
             <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
-              <div className="flex items-center gap-3 border-b border-slate-100 pb-3">
-                <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                  <RefreshCw className="w-5 h-5" />
+              <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                    <RefreshCw className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-sm text-slate-900">بيانات الربط السحابي (Supabase Cloud Config)</h3>
+                    <p className="text-xs text-slate-400">يمكنك الحصول عليها من إعدادات مشروعك في Supabase</p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="font-bold text-sm text-slate-900">بيانات الربط السحابي (Supabase Cloud Config)</h3>
-                  <p className="text-xs text-slate-400">يمكنك الحصول عليها مجاناً من إعدادات مشروعك في Supabase</p>
-                </div>
+
+                <span className={`text-xs font-bold px-3 py-1 rounded-full ${
+                  isCloudConnected ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
+                }`}>
+                  {isCloudConnected ? '🟢 متصل بالسحابة' : '🟡 غير متصل'}
+                </span>
               </div>
+
+              {connectionMessage && (
+                <div className={`p-3 rounded-xl text-xs font-semibold ${
+                  isCloudConnected ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-amber-50 text-amber-800 border border-amber-200'
+                }`}>
+                  {connectionMessage}
+                </div>
+              )}
 
               <form onSubmit={saveSupabaseConfig} className="space-y-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Project URL (رابط المشروع):</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Project URL (رابط المشروع الأساسي):</label>
                   <input
                     type="text"
                     dir="ltr"
-                    placeholder="https://xyzcompany.supabase.co"
+                    required
+                    placeholder="https://smkuwngdtqxjbnwfueln.supabase.co"
                     value={supabaseUrl}
                     onChange={(e) => setSupabaseUrl(e.target.value)}
                     className="w-full text-xs font-mono px-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    * تأكد أن الرابط ينتهي بـ <code className="text-emerald-700">.supabase.co</code> فقط وبدون <code className="line-through text-rose-500">/rest/v1</code> في نهايته.
+                  </p>
                 </div>
 
                 <div>
@@ -926,38 +1041,44 @@ export default function App() {
                   <input
                     type="password"
                     dir="ltr"
+                    required
                     placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
                     value={supabaseKey}
                     onChange={(e) => setSupabaseKey(e.target.value)}
                     className="w-full text-xs font-mono px-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    * تجده في Supabase تحت: <span className="font-semibold">Project Settings ⬅ API ⬅ anon public</span>
+                  </p>
                 </div>
 
                 <div className="pt-2 flex items-center gap-3">
                   <button
                     type="submit"
-                    className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-5 py-2.5 rounded-xl transition shadow-xs"
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-5 py-2.5 rounded-xl transition shadow-xs flex items-center gap-1.5"
                   >
-                    حفظ واختبار الاتصال
+                    <Check className="w-4 h-4" />
+                    <span>حفظ واختبار الاتصال فوراً</span>
                   </button>
 
                   <button
                     type="button"
                     onClick={syncWithSupabase}
-                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-4 py-2.5 rounded-xl transition"
+                    className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-4 py-2.5 rounded-xl transition flex items-center gap-1.5"
                   >
-                    مزامنة فورية الآن
+                    <RefreshCw className={`w-3.5 h-3.5 ${syncStatus === 'syncing' ? 'animate-spin text-emerald-600' : ''}`} />
+                    <span>مزامنة البيانات الآن</span>
                   </button>
                 </div>
               </form>
 
-              <div className="bg-slate-50 p-3 rounded-xl text-xs text-slate-500 space-y-1">
-                <div className="font-bold text-slate-700 flex items-center gap-1">
-                  <HelpCircle className="w-3.5 h-3.5" /> خطوات إعداد قاعدة البيانات في دقيقة واحدة:
+              <div className="bg-slate-50 p-3.5 rounded-xl text-xs text-slate-600 space-y-1.5 border border-slate-200/60">
+                <div className="font-bold text-slate-800 flex items-center gap-1">
+                  <HelpCircle className="w-3.5 h-3.5 text-emerald-600" /> ملحوظة مهمة للتأكد من المزامنة:
                 </div>
-                <p>1. ادخل على حسابك في Supabase وافتح **SQL Editor**.</p>
-                <p>2. افتح ملف <code className="text-emerald-700 font-mono">supabase_schema.sql</code> الموجود في مجلد التطبيق وانسخ محتواه والصقه هناك ثم اضغط **RUN**.</p>
-                <p>3. انسخ Project URL و Anon Key من Project Settings &gt; API وضعهما هنا.</p>
+                <p>1. تأكد من نسخ مفتاح <strong className="text-slate-900">anon public</strong> (يبدأ بـ <code className="text-indigo-600">eyJhbG...</code>).</p>
+                <p>2. تأكد أن الرابط لا يحتوي على كلمة <code className="line-through text-rose-500">rest/v1</code> في نهايته.</p>
+                <p>3. بمجرد الحفظ والاتصال بنجاح، ستتحول النقطة بالأعلى إلى <span className="text-emerald-600 font-bold">🟢 سحابي متصل</span> وأي عملية تضيفها ستظهر فوراً في جداول Supabase!</p>
               </div>
             </div>
 
