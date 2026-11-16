@@ -3,7 +3,8 @@ import {
   Wallet, TrendingUp, AlertTriangle, CreditCard, Calendar, Plus, CheckCircle2, 
   Trash2, Settings, ArrowDownRight, ArrowUpRight, ShieldAlert, Sparkles, 
   RefreshCw, Smartphone, DollarSign, PieChart, Clock, ExternalLink, HelpCircle,
-  Utensils, Home, Car, GraduationCap, HeartPulse, Coffee, ShoppingBag, Check, X
+  Utensils, Home, Car, GraduationCap, HeartPulse, Coffee, ShoppingBag, Check, X,
+  Eye, EyeOff, KeyRound
 } from 'lucide-react';
 import { getSupabaseClient, resetSupabaseClient, sanitizeSupabaseUrl } from './supabaseClient';
 import { 
@@ -16,7 +17,6 @@ const generateUUID = () => {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
   }
-  // Fallback RFC4122 compliant UUID v4
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
     const v = c === 'x' ? r : (r & 0x3) | 0x8;
@@ -25,10 +25,8 @@ const generateUUID = () => {
 };
 
 export default function App() {
-  // Navigation State
-  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard' | 'expenses' | 'commitments' | 'income' | 'settings'
+  const [activeTab, setActiveTab] = useState('dashboard');
   
-  // Data State
   const [categories, setCategories] = useState(() => {
     const saved = localStorage.getItem('masroufy_categories');
     return saved ? JSON.parse(saved) : INITIAL_CATEGORIES;
@@ -51,14 +49,15 @@ export default function App() {
 
   // Supabase Configuration State
   const [supabaseUrl, setSupabaseUrl] = useState(() => {
-    const raw = localStorage.getItem('supabase_url') || import.meta.env.VITE_SUPABASE_URL || '';
+    const raw = localStorage.getItem('supabase_url') || import.meta.env.VITE_SUPABASE_URL || 'https://smkuwngdtqxjbnwfueln.supabase.co';
     return sanitizeSupabaseUrl(raw);
   });
   const [supabaseKey, setSupabaseKey] = useState(() => {
     return localStorage.getItem('supabase_anon_key') || import.meta.env.VITE_SUPABASE_ANON_KEY || '';
   });
+  const [showKeyPassword, setShowKeyPassword] = useState(false);
   const [isCloudConnected, setIsCloudConnected] = useState(false);
-  const [syncStatus, setSyncStatus] = useState(''); // 'idle' | 'syncing' | 'success' | 'error'
+  const [syncStatus, setSyncStatus] = useState('');
   const [connectionMessage, setConnectionMessage] = useState('');
 
   // Modals & Forms
@@ -67,7 +66,6 @@ export default function App() {
   const [showAddCommitment, setShowAddCommitment] = useState(false);
   const [smartInputText, setSmartInputText] = useState('');
 
-  // Form States
   const [newExpense, setNewExpense] = useState({
     title: '',
     amount: '',
@@ -94,7 +92,6 @@ export default function App() {
     notes: '',
   });
 
-  // Save to LocalStorage whenever state updates
   useEffect(() => {
     localStorage.setItem('masroufy_categories', JSON.stringify(categories));
     localStorage.setItem('masroufy_expenses', JSON.stringify(expenses));
@@ -102,7 +99,6 @@ export default function App() {
     localStorage.setItem('masroufy_commitments', JSON.stringify(commitments));
   }, [categories, expenses, income, commitments]);
 
-  // Check Supabase connection on load
   useEffect(() => {
     testSupabaseConnection();
   }, []);
@@ -115,23 +111,19 @@ export default function App() {
     }
     setSyncStatus('syncing');
     try {
-      // Use a simple GET query
       const { data, error } = await client.from('categories').select('*').limit(1);
-      if (error) {
-        throw error;
-      }
+      if (error) throw error;
+      
       setIsCloudConnected(true);
       setSyncStatus('success');
       setConnectionMessage('✅ متصل بالسحابة (Supabase) وجاهز للمزامنة');
       setTimeout(() => setSyncStatus(''), 3000);
-
-      // Auto-sync data if cloud has entries
       loadDataFromCloud(client);
     } catch (err) {
       console.warn('Supabase test connection failed:', err);
       setIsCloudConnected(false);
       setSyncStatus('error');
-      setConnectionMessage(`⚠️ فشل الاتصال: ${err.message || 'تأكد من صحة الرابط والمفتاح'}`);
+      setConnectionMessage(`⚠️ خطأ في الاتصال: ${err.message || 'المفتاح غير صالح'}`);
     }
   };
 
@@ -175,7 +167,6 @@ export default function App() {
     }
   };
 
-  // Financial Calculations
   const totalIncome = useMemo(() => {
     return income.reduce((sum, item) => sum + (Number(item.amount) || 0), 0);
   }, [income]);
@@ -191,14 +182,12 @@ export default function App() {
   const netLiquidity = totalIncome - (totalCommitments + totalExpenses);
   const savingsRate = totalIncome > 0 ? ((netLiquidity / totalIncome) * 100).toFixed(1) : 0;
 
-  // Safe Daily Spend Calculation
   const today = new Date();
   const currentDay = today.getDate();
   const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
   const remainingDays = Math.max(1, daysInMonth - currentDay + 1);
   const safeDailySpend = netLiquidity > 0 ? (netLiquidity / remainingDays).toFixed(0) : 0;
 
-  // Spending per category
   const categorySpending = useMemo(() => {
     const map = {};
     categories.forEach(c => { map[c.name] = 0; });
@@ -212,7 +201,6 @@ export default function App() {
     return map;
   }, [categories, expenses]);
 
-  // Natural Language Smart Input Parser
   const parseSmartInput = (text) => {
     if (!text.trim()) return;
     const parts = text.trim().split(/\s+/);
@@ -270,7 +258,6 @@ export default function App() {
     });
   };
 
-  // Add Expense Handler
   const handleAddExpense = async (e) => {
     e.preventDefault();
     if (!newExpense.title || !newExpense.amount) return;
@@ -287,7 +274,6 @@ export default function App() {
     
     setExpenses([item, ...expenses]);
 
-    // Push to Supabase
     const client = getSupabaseClient();
     if (client) {
       try {
@@ -315,7 +301,6 @@ export default function App() {
     setShowAddExpense(false);
   };
 
-  // Add Income Handler
   const handleAddIncome = async (e) => {
     e.preventDefault();
     if (!newIncome.source || !newIncome.amount) return;
@@ -332,7 +317,6 @@ export default function App() {
 
     setIncome([item, ...income]);
 
-    // Push to Supabase
     const client = getSupabaseClient();
     if (client) {
       try {
@@ -359,7 +343,6 @@ export default function App() {
     setShowAddIncome(false);
   };
 
-  // Add Commitment Handler
   const handleAddCommitment = async (e) => {
     e.preventDefault();
     if (!newCommitment.title || !newCommitment.amount) return;
@@ -400,7 +383,6 @@ export default function App() {
     setShowAddCommitment(false);
   };
 
-  // Toggle Commitment Status
   const toggleCommitmentStatus = async (id) => {
     const updated = commitments.map(c => {
       if (c.id === id) {
@@ -420,7 +402,6 @@ export default function App() {
     }
   };
 
-  // Delete Handlers
   const deleteExpense = async (id) => {
     if (!confirm('هل أنت متأكد من حذف هذا المصروف؟')) return;
     setExpenses(expenses.filter(e => e.id !== id));
@@ -448,11 +429,14 @@ export default function App() {
     }
   };
 
-  // Save Supabase credentials
   const saveSupabaseConfig = async (e) => {
     e.preventDefault();
     const cleanUrl = sanitizeSupabaseUrl(supabaseUrl);
     const cleanKey = supabaseKey.trim();
+
+    if (cleanKey.length < 50) {
+      alert(`⚠️ المفتاح يبدو قصيراً جداً (${cleanKey.length} حرفاً)! مفتاح anon يبدأ عادة بـ eyJ... ويتكون من أكثر من 150 حرفاً.`);
+    }
 
     localStorage.setItem('supabase_url', cleanUrl);
     localStorage.setItem('supabase_anon_key', cleanKey);
@@ -483,8 +467,8 @@ export default function App() {
       console.error(err);
       setIsCloudConnected(false);
       setSyncStatus('error');
-      setConnectionMessage(`❌ خطأ في الاتصال: ${err.message || 'تأكد من صحة الرابط ومفتاح Anon'}`);
-      alert(`❌ فشل الاتصال: ${err.message || 'تأكد من المفتاح العام Anon وليس مفتاح Service Role'}`);
+      setConnectionMessage(`❌ خطأ في الاتصال: ${err.message || 'تأكد من المفتاح العام Anon'}`);
+      alert(`❌ فشل الاتصال: ${err.message}\nتأكد أنك نسخت مفتاح anon public بالكامل من إعدادات Supabase.`);
     }
   };
 
@@ -510,7 +494,6 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Quick Add Button (Desktop) */}
             <button
               onClick={() => setShowAddExpense(true)}
               className="hidden md:flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white text-sm font-semibold px-4 py-2 rounded-xl transition shadow-sm"
@@ -519,7 +502,6 @@ export default function App() {
               <span>إضافة مصروف سريع</span>
             </button>
 
-            {/* Sync Button */}
             <button
               onClick={syncWithSupabase}
               title="مزامنة فورية"
@@ -530,7 +512,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Navigation Tabs (Desktop & Tablet) */}
         <nav className="max-w-6xl mx-auto px-4 flex gap-1 border-t border-slate-800 overflow-x-auto no-scrollbar">
           {[
             { id: 'dashboard', label: 'لوحة التحكم', icon: PieChart },
@@ -566,10 +547,7 @@ export default function App() {
         {activeTab === 'dashboard' && (
           <div className="space-y-6">
 
-            {/* Top Financial KPI Cards Grid */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4">
-              
-              {/* Income Card */}
               <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
                 <div className="flex items-center justify-between text-slate-500 text-xs font-semibold mb-2">
                   <span>إجمالي الدخل</span>
@@ -585,7 +563,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Commitments Card */}
               <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
                 <div className="flex items-center justify-between text-slate-500 text-xs font-semibold mb-2">
                   <span>الأقساط والجمعيات</span>
@@ -601,7 +578,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Daily Expenses Card */}
               <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col justify-between">
                 <div className="flex items-center justify-between text-slate-500 text-xs font-semibold mb-2">
                   <span>المصاريف اليومية</span>
@@ -617,7 +593,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Net Liquidity Card */}
               <div className={`p-4 rounded-2xl border shadow-xs flex flex-col justify-between ${
                 netLiquidity >= 0 
                   ? 'bg-gradient-to-br from-emerald-600 to-teal-700 text-white border-emerald-500' 
@@ -636,7 +611,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Safe Daily Spend Highlight Banner */}
             <div className="bg-gradient-to-r from-slate-900 to-indigo-950 text-white p-4 md:p-5 rounded-2xl shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="w-12 h-12 rounded-2xl bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center text-indigo-300">
@@ -655,7 +629,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Upcoming Commitments Alert Banner */}
             {commitments.filter(c => c.status !== 'تم الدفع').length > 0 && (
               <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4">
                 <div className="flex items-center gap-2 font-bold text-amber-900 text-sm mb-2">
@@ -684,7 +657,6 @@ export default function App() {
               </div>
             )}
 
-            {/* Budget vs Actual Category Progress Section */}
             <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs">
               <div className="flex items-center justify-between mb-4">
                 <div>
@@ -726,7 +698,6 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* Progress Bar */}
                       <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
                         <div 
                           className={`h-full rounded-full transition-all duration-500 ${
@@ -746,7 +717,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Recent Expenses Preview on Dashboard */}
             <div className="bg-white rounded-2xl border border-slate-200/80 p-5 shadow-xs">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="font-bold text-base text-slate-900">آخر المصاريف المسجلة</h3>
@@ -996,11 +966,11 @@ export default function App() {
               <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                    <RefreshCw className="w-5 h-5" />
+                    <KeyRound className="w-5 h-5" />
                   </div>
                   <div>
                     <h3 className="font-bold text-sm text-slate-900">بيانات الربط السحابي (Supabase Cloud Config)</h3>
-                    <p className="text-xs text-slate-400">يمكنك الحصول عليها من إعدادات مشروعك في Supabase</p>
+                    <p className="text-xs text-slate-400">تجدها في لوحة تحكم Supabase الخاصة بك</p>
                   </div>
                 </div>
 
@@ -1013,7 +983,7 @@ export default function App() {
 
               {connectionMessage && (
                 <div className={`p-3 rounded-xl text-xs font-semibold ${
-                  isCloudConnected ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-amber-50 text-amber-800 border border-amber-200'
+                  isCloudConnected ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'
                 }`}>
                   {connectionMessage}
                 </div>
@@ -1021,7 +991,7 @@ export default function App() {
 
               <form onSubmit={saveSupabaseConfig} className="space-y-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Project URL (رابط المشروع الأساسي):</label>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Project URL (رابط المشروع):</label>
                   <input
                     type="text"
                     dir="ltr"
@@ -1031,25 +1001,38 @@ export default function App() {
                     onChange={(e) => setSupabaseUrl(e.target.value)}
                     className="w-full text-xs font-mono px-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                   />
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    * تأكد أن الرابط ينتهي بـ <code className="text-emerald-700">.supabase.co</code> فقط وبدون <code className="line-through text-rose-500">/rest/v1</code> في نهايته.
-                  </p>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Anon Public Key (المفتاح العام):</label>
-                  <input
-                    type="password"
-                    dir="ltr"
-                    required
-                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-                    value={supabaseKey}
-                    onChange={(e) => setSupabaseKey(e.target.value)}
-                    className="w-full text-xs font-mono px-3 py-2.5 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  />
-                  <p className="text-[11px] text-slate-400 mt-1">
-                    * تجده في Supabase تحت: <span className="font-semibold">Project Settings ⬅ API ⬅ anon public</span>
-                  </p>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-700">Anon Public Key (المفتاح العام):</label>
+                    <span className="text-[11px] text-slate-400">
+                      {supabaseKey.length > 0 ? `طول المفتاح الحالي: ${supabaseKey.length} حرفاً` : 'لم يتم إدخال مفتاح بعد'}
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type={showKeyPassword ? 'text' : 'password'}
+                      dir="ltr"
+                      required
+                      placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                      value={supabaseKey}
+                      onChange={(e) => setSupabaseKey(e.target.value)}
+                      className="w-full text-xs font-mono px-3 py-2.5 pl-10 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowKeyPassword(!showKeyPassword)}
+                      className="absolute left-2.5 top-2.5 text-slate-400 hover:text-slate-600"
+                    >
+                      {showKeyPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                  {supabaseKey.length > 0 && supabaseKey.length < 50 && (
+                    <p className="text-[11px] text-rose-500 mt-1 font-semibold">
+                      ⚠️ المفتاح يبدو ناقصاً! مفتاح anon في Supabase يكون رمزاً طويلاً جداً (JWT) يبدأ بـ eyJ ويتعدى 150 حرفاً.
+                    </p>
+                  )}
                 </div>
 
                 <div className="pt-2 flex items-center gap-3">
@@ -1072,13 +1055,22 @@ export default function App() {
                 </div>
               </form>
 
-              <div className="bg-slate-50 p-3.5 rounded-xl text-xs text-slate-600 space-y-1.5 border border-slate-200/60">
-                <div className="font-bold text-slate-800 flex items-center gap-1">
-                  <HelpCircle className="w-3.5 h-3.5 text-emerald-600" /> ملحوظة مهمة للتأكد من المزامنة:
+              {/* Step-by-Step Guide with visuals */}
+              <div className="bg-indigo-50/60 p-4 rounded-2xl text-xs text-indigo-950 space-y-2 border border-indigo-100">
+                <div className="font-bold flex items-center gap-1.5 text-indigo-900 text-sm">
+                  <HelpCircle className="w-4 h-4 text-indigo-600" /> من أين تنسخ مفتاح Anon الصحيح في Supabase؟
                 </div>
-                <p>1. تأكد من نسخ مفتاح <strong className="text-slate-900">anon public</strong> (يبدأ بـ <code className="text-indigo-600">eyJhbG...</code>).</p>
-                <p>2. تأكد أن الرابط لا يحتوي على كلمة <code className="line-through text-rose-500">rest/v1</code> في نهايته.</p>
-                <p>3. بمجرد الحفظ والاتصال بنجاح، ستتحول النقطة بالأعلى إلى <span className="text-emerald-600 font-bold">🟢 سحابي متصل</span> وأي عملية تضيفها ستظهر فوراً في جداول Supabase!</p>
+                <div className="space-y-1 text-slate-700 leading-relaxed">
+                  <p>1. افتح صفحة مشروعك في Supabase: <span className="font-semibold text-indigo-700">Expenses</span>.</p>
+                  <p>2. انظر في القائمة الجانبية اليسرى بالأسفل واضغط على أيقونة **الترس (⚙️ Project Settings)**.</p>
+                  <p>3. اختر من القائمة الفرعية: **API** (أو **Data API**).</p>
+                  <p>4. ستجد قسم اسمه **Project API keys**، تحته مفتاحين:</p>
+                  <ul className="list-disc list-inside mr-2 text-xs space-y-1">
+                    <li><strong className="text-emerald-700">anon public:</strong> هذا هو المفتاح المطلوب (يبدأ بـ <code className="bg-white px-1 rounded text-indigo-600 font-mono">eyJhbGci...</code>). اضغط على زر <strong>Copy</strong> بجواره.</li>
+                    <li><span className="text-slate-400">service_role (secret):</span> لا تستخدمه في المتصفح.</li>
+                  </ul>
+                  <p className="pt-1">5. الصقه في خانة **Anon Public Key** أعلاه واضغط **حفظ واختبار الاتصال فوراً**.</p>
+                </div>
               </div>
             </div>
 
@@ -1155,7 +1147,6 @@ export default function App() {
               </button>
             </div>
 
-            {/* Smart NLP Input Box */}
             <div className="bg-indigo-50/70 border border-indigo-200/60 p-3 rounded-2xl space-y-2">
               <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-900">
                 <Sparkles className="w-3.5 h-3.5 text-indigo-600" />
