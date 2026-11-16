@@ -8,8 +8,9 @@ export default defineConfig({
     react(),
     tailwindcss(),
   ],
+  base: './', // Allows running properly on GitHub Pages (https://hi-pac.github.io/Expenses/)
   server: {
-    host: '0.0.0.0', // Allow opening from mobile phone over Wi-Fi!
+    host: '0.0.0.0',
     port: 5173,
   }
 })
