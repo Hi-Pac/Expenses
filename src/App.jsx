@@ -169,7 +169,20 @@ export default function App() {
       if (catRes.data && catRes.data.length > 0) setCategories(catRes.data);
       if (expRes.data) setExpenses(expRes.data);
       if (incRes.data) setIncome(incRes.data);
-      if (comRes.data) setCommitments(comRes.data);
+      if (comRes.data) {
+        const normalized = comRes.data.map(c => {
+          const dateVal = c.due_date || c.end_date || null;
+          const isSpecific = c.type === 'specific_date' || Boolean(dateVal);
+          return {
+            ...c,
+            due_date: dateVal,
+            end_date: dateVal,
+            type: isSpecific ? 'specific_date' : 'monthly_day',
+            due_day: c.due_day || (dateVal ? parseInt(dateVal.split('-')[2]) : 30),
+          };
+        });
+        setCommitments(normalized);
+      }
     } catch (e) {
       console.warn('Error loading data from cloud:', e);
     }
@@ -461,14 +474,20 @@ export default function App() {
     e.preventDefault();
     if (!newCommitment.title || !newCommitment.amount) return;
     
+    const isSpecific = newCommitment.type === 'specific_date';
+    const targetDate = isSpecific ? newCommitment.due_date : null;
+    const dayValue = !isSpecific && newCommitment.due_day 
+      ? parseInt(newCommitment.due_day) 
+      : (targetDate ? parseInt(targetDate.split('-')[2]) : 15);
+
     const item = {
       id: generateUUID(),
       title: newCommitment.title,
       amount: parseFloat(newCommitment.amount),
-      type: newCommitment.type,
-      due_date: newCommitment.type === 'specific_date' ? newCommitment.due_date : null,
-      due_day: newCommitment.type === 'monthly_day' ? parseInt(newCommitment.due_day) : null,
-      end_date: newCommitment.type === 'specific_date' ? newCommitment.due_date : null, // for backward compatibility
+      type: isSpecific ? 'specific_date' : 'monthly_day',
+      due_date: targetDate,
+      due_day: dayValue,
+      end_date: targetDate, // critical fallback for Supabase
       status: newCommitment.status,
       notes: newCommitment.notes || '',
     };
@@ -478,7 +497,31 @@ export default function App() {
     const client = getSupabaseClient();
     if (client) {
       try {
-        await client.from('commitments').insert([item]);
+        const payload = {
+          id: item.id,
+          title: item.title,
+          amount: item.amount,
+          type: item.type,
+          due_date: item.due_date,
+          due_day: item.due_day,
+          end_date: item.end_date,
+          status: item.status,
+          notes: item.notes,
+        };
+        const { error } = await client.from('commitments').insert([payload]);
+        if (error) {
+          console.warn('Insert with due_date failed, using fallback:', error);
+          const fallbackPayload = {
+            id: item.id,
+            title: item.title,
+            amount: item.amount,
+            due_day: item.due_day,
+            end_date: item.end_date,
+            status: item.status,
+            notes: item.notes,
+          };
+          await client.from('commitments').insert([fallbackPayload]);
+        }
       } catch (err) {
         console.error('Cloud insert error:', err);
       }
@@ -500,21 +543,58 @@ export default function App() {
     e.preventDefault();
     if (!editingCommitment) return;
 
-    const updated = commitments.map(item => item.id === editingCommitment.id ? editingCommitment : item);
+    const isSpecific = editingCommitment.type === 'specific_date' || (!editingCommitment.type && Boolean(editingCommitment.due_date || editingCommitment.end_date));
+    const targetDate = isSpecific ? (editingCommitment.due_date || editingCommitment.end_date) : null;
+    const dayValue = !isSpecific && editingCommitment.due_day 
+      ? parseInt(editingCommitment.due_day) 
+      : (targetDate ? parseInt(targetDate.split('-')[2]) : 15);
+
+    const updatedItem = {
+      ...editingCommitment,
+      type: isSpecific ? 'specific_date' : 'monthly_day',
+      due_date: targetDate,
+      end_date: targetDate,
+      due_day: dayValue,
+      amount: parseFloat(editingCommitment.amount),
+    };
+
+    const updated = commitments.map(item => item.id === editingCommitment.id ? updatedItem : item);
     setCommitments(updated);
 
     const client = getSupabaseClient();
     if (client) {
-      client.from('commitments').update({
-        title: editingCommitment.title,
-        amount: parseFloat(editingCommitment.amount),
-        type: editingCommitment.type,
-        due_date: editingCommitment.type === 'specific_date' ? editingCommitment.due_date : null,
-        due_day: editingCommitment.type === 'monthly_day' ? parseInt(editingCommitment.due_day) : null,
-        end_date: editingCommitment.type === 'specific_date' ? editingCommitment.due_date : null,
-        status: editingCommitment.status,
-        notes: editingCommitment.notes || '',
-      }).eq('id', editingCommitment.id).then();
+      try {
+        const payload = {
+          title: updatedItem.title,
+          amount: updatedItem.amount,
+          type: updatedItem.type,
+          due_date: updatedItem.due_date,
+          due_day: updatedItem.due_day,
+          end_date: updatedItem.end_date,
+          status: updatedItem.status,
+          notes: updatedItem.notes || '',
+        };
+
+        const { error } = await client.from('commitments').update(payload).eq('id', editingCommitment.id);
+        if (error) {
+          console.warn('Update with due_date failed, trying fallback schema:', error);
+          const fallbackPayload = {
+            title: updatedItem.title,
+            amount: updatedItem.amount,
+            due_day: updatedItem.due_day,
+            end_date: updatedItem.end_date,
+            status: updatedItem.status,
+            notes: updatedItem.notes || '',
+          };
+          const { error: err2 } = await client.from('commitments').update(fallbackPayload).eq('id', editingCommitment.id);
+          if (err2) {
+            console.error('Commitment update failed:', err2);
+            alert(`⚠️ تعذر الحفظ في قاعدة البيانات: ${err2.message}`);
+          }
+        }
+      } catch (err) {
+        console.error('Commitment update error:', err);
+      }
     }
 
     setEditingCommitment(null);
@@ -1153,8 +1233,8 @@ export default function App() {
                 .map(item => {
                   const isPaid = item.status === 'تم الدفع';
                   const statusInfo = getCommitmentStatus(item);
-                  const isSpecificDate = item.type === 'specific_date' || !!item.due_date;
                   const displayDate = item.due_date || item.end_date;
+                  const isSpecificDate = item.type === 'specific_date' || Boolean(displayDate);
 
                   return (
                     <div key={item.id} className={`p-5 rounded-2xl border transition-all shadow-xs ${
