@@ -1,6 +1,5 @@
 -- ==========================================================
--- مخطط قاعدة بيانات تطبيق مصروفي (Masroufy Supabase Schema)
--- انسخ هذا الكود بالكامل وضعه في SQL Editor داخل مشروعك على Supabase ثم اضغط RUN
+-- مخطط وتحديثات قاعدة بيانات تطبيق مصروفي (Masroufy Supabase Schema)
 -- ==========================================================
 
 -- 1. جدول الفئات والميزانيات
@@ -37,12 +36,14 @@ CREATE TABLE IF NOT EXISTS income (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 4. جدول الأقساط والجمعيات الشهرية
+-- 4. جدول الأقساط والجمعيات الشهرية والمستقبلية
 CREATE TABLE IF NOT EXISTS commitments (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   title TEXT NOT NULL,
   amount NUMERIC NOT NULL,
-  due_day INTEGER NOT NULL CHECK (due_day >= 1 AND due_day <= 31),
+  due_day INTEGER DEFAULT 15,
+  due_date DATE,
+  type TEXT DEFAULT 'specific_date',
   start_date DATE,
   end_date DATE,
   status TEXT NOT NULL DEFAULT 'معلق',
@@ -50,25 +51,32 @@ CREATE TABLE IF NOT EXISTS commitments (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- أوامر تحديث الجداول الحالية في حال كانت موجودة مسبقاً
+ALTER TABLE commitments ADD COLUMN IF NOT EXISTS due_date DATE;
+ALTER TABLE commitments ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'specific_date';
+
 -- تفعيل الأمان وسياسات القراءة والكتابة للـ Anon Key
 ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE expenses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE income ENABLE ROW LEVEL SECURITY;
 ALTER TABLE commitments ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "Allow public read-write on categories" ON categories FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public read-write on expenses" ON expenses FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public read-write on income" ON income FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public read-write on commitments" ON commitments FOR ALL USING (true) WITH CHECK (true);
+DO $$ BEGIN
+  CREATE POLICY "Allow public read-write on categories" ON categories FOR ALL USING (true) WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
--- إدخال بيانات الفئات الأولية
-INSERT INTO categories (name, budget, icon, color) VALUES
-  ('طعام وسوبرماركت', 3500, 'Utensils', 'emerald'),
-  ('فواتير وخدمات منزلية', 1200, 'Home', 'blue'),
-  ('مواصلات وبنزين', 1500, 'Car', 'amber'),
-  ('أولاد ومصاريف تعليم', 2500, 'GraduationCap', 'indigo'),
-  ('صحة وعيادات وأدوية', 800, 'HeartPulse', 'rose'),
-  ('ترفيه ومطاعم', 1000, 'Coffee', 'purple'),
-  ('ملابس وعناية شخصية', 1000, 'ShoppingBag', 'pink'),
-  ('طوارئ ونثريات', 1000, 'ShieldAlert', 'slate')
-ON CONFLICT (name) DO NOTHING;
+DO $$ BEGIN
+  CREATE POLICY "Allow public read-write on expenses" ON expenses FOR ALL USING (true) WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  CREATE POLICY "Allow public read-write on income" ON income FOR ALL USING (true) WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  CREATE POLICY "Allow public read-write on commitments" ON commitments FOR ALL USING (true) WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
