@@ -4,15 +4,14 @@ import {
   Trash2, Settings, ArrowDownRight, ArrowUpRight, ShieldAlert, Sparkles, 
   RefreshCw, Smartphone, DollarSign, PieChart, Clock, ExternalLink, HelpCircle,
   Utensils, Home, Car, GraduationCap, HeartPulse, Coffee, ShoppingBag, Check, X,
-  Eye, EyeOff, KeyRound
+  Eye, EyeOff, KeyRound, Cloud, Globe
 } from 'lucide-react';
-import { getSupabaseClient, resetSupabaseClient, sanitizeSupabaseUrl } from './supabaseClient';
+import { getSupabaseClient, resetSupabaseClient, sanitizeSupabaseUrl, getSavedConfig } from './supabaseClient';
 import { 
   INITIAL_CATEGORIES, INITIAL_EXPENSES, INITIAL_INCOME, 
   INITIAL_COMMITMENTS, PAYMENT_METHODS 
 } from './initialData';
 
-// Helper to generate Supabase-compatible UUIDs
 const generateUUID = () => {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) {
     return crypto.randomUUID();
@@ -27,6 +26,7 @@ const generateUUID = () => {
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   
+  // Data State - initialized from LocalStorage or empty/demo
   const [categories, setCategories] = useState(() => {
     const saved = localStorage.getItem('masroufy_categories');
     return saved ? JSON.parse(saved) : INITIAL_CATEGORIES;
@@ -48,13 +48,11 @@ export default function App() {
   });
 
   // Supabase Configuration State
-  const [supabaseUrl, setSupabaseUrl] = useState(() => {
-    const raw = localStorage.getItem('supabase_url') || import.meta.env.VITE_SUPABASE_URL || 'https://smkuwngdtqxjbnwfueln.supabase.co';
-    return sanitizeSupabaseUrl(raw);
-  });
-  const [supabaseKey, setSupabaseKey] = useState(() => {
-    return localStorage.getItem('supabase_anon_key') || import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-  });
+  const initialConfig = getSavedConfig();
+  const [supabaseUrl, setSupabaseUrl] = useState(initialConfig.url);
+  const [supabaseKey, setSupabaseKey] = useState(initialConfig.key);
+  const [isBuiltInConfig, setIsBuiltInConfig] = useState(initialConfig.isBuiltIn);
+
   const [showKeyPassword, setShowKeyPassword] = useState(false);
   const [isCloudConnected, setIsCloudConnected] = useState(false);
   const [syncStatus, setSyncStatus] = useState('');
@@ -92,6 +90,7 @@ export default function App() {
     notes: '',
   });
 
+  // Cache to LocalStorage as a local backup
   useEffect(() => {
     localStorage.setItem('masroufy_categories', JSON.stringify(categories));
     localStorage.setItem('masroufy_expenses', JSON.stringify(expenses));
@@ -99,6 +98,7 @@ export default function App() {
     localStorage.setItem('masroufy_commitments', JSON.stringify(commitments));
   }, [categories, expenses, income, commitments]);
 
+  // Connect to Supabase and fetch fresh cloud data on mount
   useEffect(() => {
     testSupabaseConnection();
   }, []);
@@ -116,9 +116,11 @@ export default function App() {
       
       setIsCloudConnected(true);
       setSyncStatus('success');
-      setConnectionMessage('✅ متصل بالسحابة (Supabase) وجاهز للمزامنة');
+      setConnectionMessage('✅ متصل بالسحابة (Supabase) وجاهز للمزامنة اللحظية');
       setTimeout(() => setSyncStatus(''), 3000);
-      loadDataFromCloud(client);
+      
+      // Auto fetch live data from cloud
+      await loadDataFromCloud(client);
     } catch (err) {
       console.warn('Supabase test connection failed:', err);
       setIsCloudConnected(false);
@@ -139,10 +141,10 @@ export default function App() {
         client.from('commitments').select('*').order('due_day', { ascending: true }),
       ]);
 
-      if (catRes.data && catRes.data.length > 0) setCategories(catRes.data);
-      if (expRes.data && expRes.data.length > 0) setExpenses(expRes.data);
-      if (incRes.data && incRes.data.length > 0) setIncome(incRes.data);
-      if (comRes.data && comRes.data.length > 0) setCommitments(comRes.data);
+      if (catRes.data) setCategories(catRes.data.length > 0 ? catRes.data : INITIAL_CATEGORIES);
+      if (expRes.data) setExpenses(expRes.data);
+      if (incRes.data) setIncome(incRes.data);
+      if (comRes.data) setCommitments(comRes.data);
     } catch (e) {
       console.warn('Error loading data from cloud:', e);
     }
@@ -151,7 +153,7 @@ export default function App() {
   const syncWithSupabase = async () => {
     const client = getSupabaseClient();
     if (!client) {
-      alert('يرجى حفظ رابط Supabase ومفتاح Anon Key أولاً في صفحة الإعدادات!');
+      alert('يرجى حفظ رابط Supabase ومفتاح Anon Key أولاً في صفحة الإعدادات أو في ملف supabaseConfig.js!');
       return;
     }
     setSyncStatus('syncing');
@@ -159,7 +161,7 @@ export default function App() {
       await loadDataFromCloud(client);
       setIsCloudConnected(true);
       setSyncStatus('success');
-      alert('✅ تمت المزامنة بنجاح مع جداول Supabase!');
+      alert('✅ تمت المزامنة بنجاح مع قاعدة البيانات السحابية!');
     } catch (err) {
       console.error(err);
       setSyncStatus('error');
@@ -958,7 +960,7 @@ export default function App() {
           <div className="space-y-6 max-w-3xl">
             <div>
               <h2 className="text-xl font-bold text-slate-900">إعدادات التطبيق والمزامنة السحابية</h2>
-              <p className="text-xs text-slate-500">ربط التطبيق بـ Supabase لمزامنة الهاتف والكمبيوتر</p>
+              <p className="text-xs text-slate-500">ربط التطبيق بـ Supabase لمزامنة الهاتف والكمبيوتر تلقائياً</p>
             </div>
 
             {/* Supabase Connection Form */}
@@ -981,6 +983,7 @@ export default function App() {
                 </span>
               </div>
 
+              {/* Status message */}
               {connectionMessage && (
                 <div className={`p-3 rounded-xl text-xs font-semibold ${
                   isCloudConnected ? 'bg-emerald-50 text-emerald-800 border border-emerald-200' : 'bg-rose-50 text-rose-800 border border-rose-200'
@@ -1055,22 +1058,15 @@ export default function App() {
                 </div>
               </form>
 
-              {/* Step-by-Step Guide with visuals */}
-              <div className="bg-indigo-50/60 p-4 rounded-2xl text-xs text-indigo-950 space-y-2 border border-indigo-100">
-                <div className="font-bold flex items-center gap-1.5 text-indigo-900 text-sm">
-                  <HelpCircle className="w-4 h-4 text-indigo-600" /> من أين تنسخ مفتاح Anon الصحيح في Supabase؟
+              {/* Direct Configuration File Guide */}
+              <div className="bg-emerald-50/70 p-4 rounded-2xl text-xs text-emerald-950 space-y-2 border border-emerald-200/80">
+                <div className="font-bold flex items-center gap-1.5 text-emerald-900 text-sm">
+                  <Globe className="w-4 h-4 text-emerald-600" /> ميزة الربط المباشر التلقائي لجميع الأجهزة:
                 </div>
-                <div className="space-y-1 text-slate-700 leading-relaxed">
-                  <p>1. افتح صفحة مشروعك في Supabase: <span className="font-semibold text-indigo-700">Expenses</span>.</p>
-                  <p>2. انظر في القائمة الجانبية اليسرى بالأسفل واضغط على أيقونة **الترس (⚙️ Project Settings)**.</p>
-                  <p>3. اختر من القائمة الفرعية: **API** (أو **Data API**).</p>
-                  <p>4. ستجد قسم اسمه **Project API keys**، تحته مفتاحين:</p>
-                  <ul className="list-disc list-inside mr-2 text-xs space-y-1">
-                    <li><strong className="text-emerald-700">anon public:</strong> هذا هو المفتاح المطلوب (يبدأ بـ <code className="bg-white px-1 rounded text-indigo-600 font-mono">eyJhbGci...</code>). اضغط على زر <strong>Copy</strong> بجواره.</li>
-                    <li><span className="text-slate-400">service_role (secret):</span> لا تستخدمه في المتصفح.</li>
-                  </ul>
-                  <p className="pt-1">5. الصقه في خانة **Anon Public Key** أعلاه واضغط **حفظ واختبار الاتصال فوراً**.</p>
-                </div>
+                <p className="text-slate-700 leading-relaxed">
+                  تم تخصيص ملف داخلي في المشروع اسمه: <code className="bg-white px-2 py-0.5 rounded font-mono text-emerald-800 font-bold">src/supabaseConfig.js</code>.
+                  بمجرد وضع المفتاح بداخله، سيتصل التطبيق بقاعدة البيانات تلقائياً على أي هاتف أو كمبيوتر دون الحاجة لإدخال أي بيانات في هذه الشاشة مطلقاً!
+                </p>
               </div>
             </div>
 
