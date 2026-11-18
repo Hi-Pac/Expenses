@@ -164,7 +164,7 @@ export default function App() {
         client.from('expenses').select('*').order('date', { ascending: false }),
         client.from('income').select('*').order('date', { ascending: false }),
         client.from('commitments').select('*').order('created_at', { ascending: false }),
-        client.from('payment_methods').select('*').order('created_at', { ascending: true }).catch(() => ({ data: null, error: true })),
+        client.from('payment_methods').select('*').order('created_at', { ascending: true }),
       ]);
 
       if (catRes.data && catRes.data.length > 0) setCategories(catRes.data);
@@ -185,42 +185,20 @@ export default function App() {
         setCommitments(normalized);
       }
 
-      // Sync and merge Payment Methods across devices
+      // Sync Payment Methods from Supabase
       try {
-        const cloudMethods = (pmRes?.data && Array.isArray(pmRes.data)) 
-          ? pmRes.data.map(p => p.name).filter(Boolean) 
-          : [];
-
-        // Check any methods already used in expenses or income
-        const txMethods = [];
-        if (expRes?.data) {
-          expRes.data.forEach(e => { if (e.payment_method) txMethods.push(e.payment_method); });
-        }
-        if (incRes?.data) {
-          incRes.data.forEach(i => { if (i.payment_method) txMethods.push(i.payment_method); });
-        }
-
-        const localSaved = JSON.parse(localStorage.getItem('masroufy_payment_methods') || '[]') || [];
-
-        // Combine all unique sources
-        const combinedMethods = Array.from(new Set([
-          ...cloudMethods,
-          ...txMethods,
-          ...localSaved,
-          ...PAYMENT_METHODS
-        ])).filter(Boolean);
-
-        if (combinedMethods.length > 0) {
-          setPaymentMethods(combinedMethods);
-          localStorage.setItem('masroufy_payment_methods', JSON.stringify(combinedMethods));
-        }
-
-        // Auto-seed missing methods to Supabase so other devices (e.g. mobile) receive them immediately
-        if (pmRes && !pmRes.error && Array.isArray(pmRes.data)) {
-          const cloudSet = new Set(cloudMethods);
-          const toUpload = combinedMethods.filter(m => !cloudSet.has(m));
-          if (toUpload.length > 0) {
-            client.from('payment_methods').insert(toUpload.map(name => ({ name }))).then();
+        if (pmRes?.data && Array.isArray(pmRes.data) && pmRes.data.length > 0) {
+          const cloudMethods = pmRes.data.map(p => p.name).filter(Boolean);
+          setPaymentMethods(cloudMethods);
+          localStorage.setItem('masroufy_payment_methods', JSON.stringify(cloudMethods));
+        } else if (pmRes && !pmRes.error) {
+          // Cloud table is empty, seed it with local methods or defaults
+          const localSaved = JSON.parse(localStorage.getItem('masroufy_payment_methods') || '[]') || [];
+          const toSeed = localSaved.length > 0 ? localSaved : PAYMENT_METHODS;
+          if (toSeed.length > 0) {
+            setPaymentMethods(toSeed);
+            localStorage.setItem('masroufy_payment_methods', JSON.stringify(toSeed));
+            client.from('payment_methods').upsert(toSeed.map(name => ({ name })), { onConflict: 'name' }).then();
           }
         }
       } catch (pmError) {
