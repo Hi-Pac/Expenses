@@ -159,11 +159,12 @@ export default function App() {
     if (!client) return;
 
     try {
-      const [catRes, expRes, incRes, comRes] = await Promise.all([
+      const [catRes, expRes, incRes, comRes, pmRes] = await Promise.all([
         client.from('categories').select('*').order('created_at', { ascending: true }),
         client.from('expenses').select('*').order('date', { ascending: false }),
         client.from('income').select('*').order('date', { ascending: false }),
         client.from('commitments').select('*').order('created_at', { ascending: false }),
+        client.from('payment_methods').select('*').order('created_at', { ascending: true }).catch(() => ({ data: null, error: true })),
       ]);
 
       if (catRes.data && catRes.data.length > 0) setCategories(catRes.data);
@@ -182,6 +183,48 @@ export default function App() {
           };
         });
         setCommitments(normalized);
+      }
+
+      // Sync and merge Payment Methods across devices
+      try {
+        const cloudMethods = (pmRes?.data && Array.isArray(pmRes.data)) 
+          ? pmRes.data.map(p => p.name).filter(Boolean) 
+          : [];
+
+        // Check any methods already used in expenses or income
+        const txMethods = [];
+        if (expRes?.data) {
+          expRes.data.forEach(e => { if (e.payment_method) txMethods.push(e.payment_method); });
+        }
+        if (incRes?.data) {
+          incRes.data.forEach(i => { if (i.payment_method) txMethods.push(i.payment_method); });
+        }
+
+        const localSaved = JSON.parse(localStorage.getItem('masroufy_payment_methods') || '[]') || [];
+
+        // Combine all unique sources
+        const combinedMethods = Array.from(new Set([
+          ...cloudMethods,
+          ...txMethods,
+          ...localSaved,
+          ...PAYMENT_METHODS
+        ])).filter(Boolean);
+
+        if (combinedMethods.length > 0) {
+          setPaymentMethods(combinedMethods);
+          localStorage.setItem('masroufy_payment_methods', JSON.stringify(combinedMethods));
+        }
+
+        // Auto-seed missing methods to Supabase so other devices (e.g. mobile) receive them immediately
+        if (pmRes && !pmRes.error && Array.isArray(pmRes.data)) {
+          const cloudSet = new Set(cloudMethods);
+          const toUpload = combinedMethods.filter(m => !cloudSet.has(m));
+          if (toUpload.length > 0) {
+            client.from('payment_methods').insert(toUpload.map(name => ({ name }))).then();
+          }
+        }
+      } catch (pmError) {
+        console.warn('Payment methods sync warning:', pmError);
       }
     } catch (e) {
       console.warn('Error loading data from cloud:', e);
@@ -685,33 +728,73 @@ export default function App() {
     }
   };
 
-  const handleAddPaymentMethod = (e) => {
+  const handleAddPaymentMethod = async (e) => {
     e.preventDefault();
-    if (!newPaymentMethodText.trim()) return;
-    if (paymentMethods.includes(newPaymentMethodText.trim())) {
+    const trimmed = newPaymentMethodText.trim();
+    if (!trimmed) return;
+    if (paymentMethods.includes(trimmed)) {
       alert('وسيلة الدفع هذه موجودة بالفعل!');
       return;
     }
-    setPaymentMethods([...paymentMethods, newPaymentMethodText.trim()]);
+    const updated = [...paymentMethods, trimmed];
+    setPaymentMethods(updated);
     setNewPaymentMethodText('');
+
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        await client.from('payment_methods').insert([{ name: trimmed }]);
+      } catch (err) {
+        console.warn('Could not insert payment_method into cloud:', err);
+      }
+    }
   };
 
-  const handleUpdatePaymentMethod = (e) => {
+  const handleUpdatePaymentMethod = async (e) => {
     e.preventDefault();
     if (!editingPaymentMethod || !editingPaymentMethod.newName.trim()) return;
     const { oldName, newName } = editingPaymentMethod;
-    setPaymentMethods(paymentMethods.map(m => m === oldName ? newName.trim() : m));
-    setExpenses(expenses.map(exp => exp.payment_method === oldName ? { ...exp, payment_method: newName.trim() } : exp));
+    const trimmedNew = newName.trim();
+    if (oldName === trimmedNew) {
+      setEditingPaymentMethod(null);
+      return;
+    }
+
+    const updated = paymentMethods.map(m => m === oldName ? trimmedNew : m);
+    setPaymentMethods(updated);
+    setExpenses(expenses.map(exp => exp.payment_method === oldName ? { ...exp, payment_method: trimmedNew } : exp));
+    setIncome(income.map(inc => inc.payment_method === oldName ? { ...inc, payment_method: trimmedNew } : inc));
     setEditingPaymentMethod(null);
+
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        await client.from('payment_methods').update({ name: trimmedNew }).eq('name', oldName);
+        client.from('expenses').update({ payment_method: trimmedNew }).eq('payment_method', oldName).then();
+        client.from('income').update({ payment_method: trimmedNew }).eq('payment_method', oldName).then();
+      } catch (err) {
+        console.warn('Could not update payment_method in cloud:', err);
+      }
+    }
   };
 
-  const handleDeletePaymentMethod = (method) => {
+  const handleDeletePaymentMethod = async (method) => {
     if (paymentMethods.length <= 1) {
       alert('يجب الإبقاء على وسيلة دفع واحدة على الأقل!');
       return;
     }
     if (!confirm(`هل تريد حذف طريقة الدفع "${method}"؟`)) return;
-    setPaymentMethods(paymentMethods.filter(m => m !== method));
+    const updated = paymentMethods.filter(m => m !== method);
+    setPaymentMethods(updated);
+
+    const client = getSupabaseClient();
+    if (client) {
+      try {
+        await client.from('payment_methods').delete().eq('name', method);
+      } catch (err) {
+        console.warn('Could not delete payment_method in cloud:', err);
+      }
+    }
   };
 
   // ----------------- EXPORT / BACKUP -----------------

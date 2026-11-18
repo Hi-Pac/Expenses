@@ -51,6 +51,13 @@ CREATE TABLE IF NOT EXISTS commitments (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 5. جدول طرق الدفع المخصصة (لمزامنتها بين الهاتف والكمبيوتر)
+CREATE TABLE IF NOT EXISTS payment_methods (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- أوامر تحديث الجداول الحالية في حال كانت موجودة مسبقاً
 ALTER TABLE commitments ADD COLUMN IF NOT EXISTS due_date DATE;
 ALTER TABLE commitments ADD COLUMN IF NOT EXISTS type TEXT DEFAULT 'specific_date';
@@ -60,6 +67,7 @@ ALTER TABLE categories ENABLE ROW LEVEL SECURITY;
 ALTER TABLE expenses ENABLE ROW LEVEL SECURITY;
 ALTER TABLE income ENABLE ROW LEVEL SECURITY;
 ALTER TABLE commitments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payment_methods ENABLE ROW LEVEL SECURITY;
 
 DO $$ BEGIN
   CREATE POLICY "Allow public read-write on categories" ON categories FOR ALL USING (true) WITH CHECK (true);
@@ -78,5 +86,10 @@ END $$;
 
 DO $$ BEGIN
   CREATE POLICY "Allow public read-write on commitments" ON commitments FOR ALL USING (true) WITH CHECK (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  CREATE POLICY "Allow public read-write on payment_methods" ON payment_methods FOR ALL USING (true) WITH CHECK (true);
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
